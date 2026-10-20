@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Pedra das Nuvens</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { width:100%; height:100%; overflow:hidden; background:#0b0d12; font-family:system-ui, sans-serif; color:#eee; }
+  #game { display:block; width:100vw; height:100vh; touch-action:none; }
+  #hud { position:fixed; top:8px; left:8px; right:8px; display:flex; justify-content:space-between; pointer-events:none; font-size:14px; text-shadow:0 1px 2px #000; }
+  #inv { background:rgba(0,0,0,.45); padding:6px 10px; border-radius:8px; font-size:13px; line-height:1.5; }
+  #depth { background:rgba(0,0,0,.45); padding:6px 10px; border-radius:8px; }
+  #controls { position:fixed; inset:0; pointer-events:none; }
+  .btn { position:absolute; pointer-events:auto; background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.25); border-radius:12px; display:flex; align-items:center; justify-content:center; font-size:20px; color:#fff; user-select:none; backdrop-filter:blur(4px); }
+  .btn:active { background:rgba(255,255,255,.3); }
+  #dpad { position:absolute; bottom:20px; left:20px; width:150px; height:150px; pointer-events:none; }
+  #dpad .btn { width:50px; height:50px; }
+  #up { left:50px; top:0; } #down { left:50px; top:100px; } #left { left:0; top:50px; } #right { left:100px; top:50px; }
+  #dig { bottom:30px; right:20px; width:80px; height:80px; border-radius:50%; font-size:26px; }
+  #craftBtn { top:8px; right:8px; width:auto; padding:8px 14px; height:auto; font-size:14px; pointer-events:auto; position:fixed; }
+  #modal { position:fixed; inset:0; background:rgba(0,0,0,.85); display:none; flex-direction:column; align-items:center; justify-content:center; gap:12px; padding:20px; text-align:center; z-index:10; }
+  #modal h2 { font-size:22px; }
+  #modal .item { background:rgba(255,255,255,.1); padding:10px 18px; border-radius:10px; cursor:pointer; }
+  #modal .item:hover { background:rgba(255,255,255,.25); }
+  #modal .item.disabled { opacity:.35; pointer-events:none; }
+  #closeModal { position:absolute; top:16px; right:20px; font-size:28px; cursor:pointer; }
+  #cutscene { position:fixed; inset:0; background:#000; display:none; z-index:20; flex-direction:column; align-items:center; justify-content:center; gap:20px; text-align:center; padding:20px; }
+  #cutscene h1 { color:#ffd35c; font-size:26px; }
+  #cutscene p { max-width:500px; line-height:1.5; }
+  #tutorial { position:fixed; inset:0; background:rgba(0,0,0,0.92); z-index:30; display:flex; align-items:center; justify-content:center; padding:20px; }
+  #tutorial .tut-box { max-width:600px; background:#1a1d24; border:2px solid #3ddc84; border-radius:14px; padding:24px; line-height:1.6; font-size:14px; }
+  #tutorial h1 { color:#ffd35c; font-size:22px; margin-bottom:14px; }
+  #tutorial p { margin-bottom:10px; }
+  #tutorial button { margin-top:14px; padding:12px 28px; background:#3ddc84; color:#0b0d12; border:none; border-radius:8px; font-size:16px; font-weight:bold; cursor:pointer; }
+  #muteBtn { position:fixed; bottom:20px; right:120px; width:44px; height:44px; border-radius:50%; background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.25); color:#fff; font-size:20px; cursor:pointer; z-index:15; }
+  .hidden { display:none !important; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud"><div id="inv"></div><div id="depth">0m</div></div>
+<div id="controls">
+  <div id="dpad">
+    <div class="btn" id="up">▲</div><div class="btn" id="down">▼</div>
+    <div class="btn" id="left">◀</div><div class="btn" id="right">▶</div>
+  </div>
+  <div class="btn" id="dig">⛏</div>
+  <div class="btn" id="craftBtn">Craft</div>
+</div>
+<div id="modal"><span id="closeModal">✕</span><h2>Craft</h2><div id="craftList"></div></div>
+<div id="cutscene"><h1>A Pedra das Nuvens</h1><p id="cutsceneText"></p></div>
+<div id="tutorial">
+  <div class="tut-box">
+    <h1>🪨 Pedra das Nuvens</h1>
+    <p><b>Objetivo:</b> cave cada vez mais fundo, ache os 6 minérios e crafte a <b>Pedra das Nuvens</b>. Depois suba até o portal no topo para zerar o jogo.</p>
+    <p><b>Controles PC:</b> A/D ou ←/→ mover · S/↓ descer · <b>Espaço</b> subir/escalar · <b>W/↑</b> mirar pra cima · <b>Clique esquerdo</b> (segure) minerar · <b>C</b> craft · <b>E</b> portal</p>
+    <p><b>Controles Mobile:</b> d-pad pra mover, botão ⛏ pra minerar, botão ▲ pra subir, botão Craft</p>
+    <p><b>Dica:</b> segure o botão de minerar pra cavar várias vezes seguidas. Minérios mais raros demoram mais pra quebrar.</p>
+    <button id="btnLiTudo">Li tudo</button>
+  </div>
+</div>
+<script>
+(() => {
+"use strict";
+
+const TILE=32, GRAVITY=0.6, MOVE_SPEED=2.4, JUMP=8.5, FLY_SPEED=3.2, ZOOM=1.6;
+const ORES=[
+  {id:'carvao',nome:'Carvão',cor:'#2a2a2a',camada:0,rar:0.10},
+  {id:'ferro',nome:'Ferro',cor:'#a86a3a',camada:30,rar:0.08},
+  {id:'ouro',nome:'Ouro',cor:'#e8b923',camada:60,rar:0.06},
+  {id:'diamante',nome:'Diamante',cor:'#5ad6f0',camada:100,rar:0.05},
+  {id:'esmeralda',nome:'Esmeralda',cor:'#2ecc71',camada:150,rar:0.04},
+  {id:'ametista',nome:'Ametista',cor:'#9b59b6',camada:200,rar:0.03},
+];
+const PICARETAS=[
+  {nome:'Pedra',forca:1,custo:{carvao:3}},
+  {nome:'Pedra Melhorada',forca:2,custo:{carvao:10}},
+  {nome:'Ferro',forca:3,custo:{carvao:5,ferro:5}},
+  {nome:'Ouro',forca:4,custo:{ferro:8,ouro:5}},
+  {nome:'Diamante',forca:5,custo:{ouro:8,diamante:5}},
+  {nome:'Esmeralda',forca:6,custo:{diamante:8,esmeralda:5}},
+  {nome:'Ametista',forca:7,custo:{esmeralda:8,ametista:5}},
+];
+const PEDRA_NUVENS={nome:'Pedra das Nuvens',custo:{diamante:5,esmeralda:5,ametista:5}};
+const TILE_DIRT=0,TILE_STONE=1,TILE_ORE=2,TILE_AIR=3,TILE_BEDROCK=4,TILE_GRASS=5;
+const DURABILIDADE = { carvao:1, ferro:2, ouro:6, diamante:4, esmeralda:10, ametista:15 };
+const danoMap = new Map();
+const canvas=document.getElementById('game'), ctx=canvas.getContext('2d');
+let W,H;
+function resize(){W=canvas.width=window.innerWidth;H=canvas.height=window.innerHeight;}
+window.addEventListener('resize',resize);resize();
+
+let audioCtx = null;
+let somLigado = true;
+function initAudio(){
+  if(!audioCtx){
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+    catch(e){ console.warn('Áudio não disponível'); }
+  }
+  if(audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+}
+document.addEventListener('click', initAudio, {once:true});
+document.addEventListener('keydown', initAudio, {once:true});
+document.addEventListener('touchstart', initAudio, {once:true});
+function tocarTom(freq, dur, tipo='sine', vol=0.15, freqFinal=null){
+  if(!somLigado || !audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = tipo;
+  osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+  if(freqFinal !== null) osc.frequency.exponentialRampToValueAtTime(freqFinal, audioCtx.currentTime + dur);
+  gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  osc.start(); osc.stop(audioCtx.currentTime + dur);
+}
+function tocarRuido(dur, vol=0.1){
+  if(!somLigado || !audioCtx) return;
+  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * dur, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for(let i=0;i<data.length;i++) data[i] = Math.random()*2-1;
+  const src = audioCtx.createBufferSource();
+  src.buffer = buffer;
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+  src.connect(gain); gain.connect(audioCtx.destination);
+  src.start();
+}
+const SONS_MINERIO = {
+  carvao:   () => { tocarTom(180, 0.08, 'square', 0.08); tocarRuido(0.05, 0.04); },
+  ferro:    () => { tocarTom(220, 0.10, 'triangle', 0.12); tocarTom(330, 0.08, 'sine', 0.08); },
+  ouro:     () => { tocarTom(523, 0.10, 'sine', 0.12); tocarTom(659, 0.12, 'sine', 0.10); tocarTom(784, 0.15, 'sine', 0.08); },
+  diamante: () => { tocarTom(1046, 0.12, 'sine', 0.14); tocarTom(1318, 0.14, 'sine', 0.12); tocarTom(1568, 0.18, 'triangle', 0.10); },
+  esmeralda:() => { tocarTom(587, 0.10, 'sine', 0.13); tocarTom(880, 0.14, 'triangle', 0.11); tocarTom(1174, 0.16, 'sine', 0.10); },
+  ametista: () => { tocarTom(440, 0.12, 'triangle', 0.14); tocarTom(660, 0.14, 'sine', 0.12); tocarTom(880, 0.16, 'sine', 0.10); tocarTom(1100, 0.18, 'triangle', 0.08); },
+};
+function somCavar(pedra){
+  if(pedra){ tocarTom(140, 0.05, 'square', 0.10); tocarRuido(0.04, 0.05); }
+  else { tocarRuido(0.06, 0.06); tocarTom(100, 0.04, 'sine', 0.04); }
+}
+function somColetar(oreId){ if(SONS_MINERIO[oreId]) SONS_MINERIO[oreId](); }
+function somCraft(){ [440,554,659,880].forEach((f,i)=>setTimeout(()=>tocarTom(f,0.15,'sine',0.12), i*80)); }
+function somErro(){ tocarTom(120, 0.25, 'sawtooth', 0.10, 80); }
+function somPortal(){ tocarTom(300, 0.5, 'sine', 0.10, 900); }
+function somMotorNave(){ tocarTom(80, 0.6, 'sawtooth', 0.08, 120); }
+function somDecolagem(){ tocarTom(200, 0.8, 'sawtooth', 0.12, 1200); }
+function somVitoria(){ [523,659,784,1046].forEach((f,i)=>setTimeout(()=>tocarTom(f,0.3,'sine',0.15), i*150)); }
+
+const world=new Map();
+const SEED=Math.floor(Math.random()*1e9);
+function hash(x,y){let h=(x*374761393+y*668265263+SEED)|0;h=(h^(h>>13))*1274126177;return((h^(h>>16))>>>0)/4294967295;}
+const SUPERFICIE=4;
+function getTile(x,y){
+  const k=x+','+y;
+  if(world.has(k))return world.get(k);
+  if(y<SUPERFICIE)return{tipo:TILE_AIR};
+  if(y>260)return{tipo:TILE_BEDROCK};
+  const altura=SUPERFICIE+Math.floor((hash(x,999)-0.5)*3);
+  if(y<altura)return{tipo:TILE_AIR};
+  const camada=y;
+  if(camada===altura || camada===altura+1) return{tipo:TILE_GRASS,dureza:1,seed:hash(x,y)};
+  const ferro=ORES.find(o=>o.id==='ferro');
+  if(camada<ferro.camada && hash(x*17+3,y*23+7)<0.015) return{tipo:TILE_ORE,ore:ferro.id,cor:ferro.cor,dureza:1,seed:hash(x,y)};
+  let cand=ORES.filter(o=>camada>=o.camada&&camada<o.camada+80);
+  if(cand.length===0)cand=[ORES[0]];
+  for(let i=cand.length-1;i>=0;i--){
+    const o=cand[i];
+    if(hash(x*7+i,y*13)<o.rar) return{tipo:TILE_ORE,ore:o.id,cor:o.cor,dureza:1,seed:hash(x,y)};
+  }
+  if(camada<20)return{tipo:TILE_DIRT,dureza:1,seed:hash(x,y)};
+  return{tipo:TILE_STONE,dureza:2,seed:hash(x,y)};
+}
+function setTile(x,y,t){world.set(x+','+y,t);}
+
+const player={x:0,y:0,vx:0,vy:0,w:20,h:28,onGround:false,facing:1,picareta:0,inv:{},hasPedra:false,flying:false,walkFrame:0,digFrame:0};
+(function spawnSeguro(){
+  const tx=0;let ty=SUPERFICIE+1;
+  while(ty<300&&getTile(tx,ty).tipo===TILE_AIR)ty++;
+  ty--;
+  player.x=tx*TILE+(TILE-player.w)/2;
+  player.y=ty*TILE+(TILE-player.h);
+  const cx=Math.floor((player.x+player.w/2)/TILE), cy=Math.floor((player.y+player.h/2)/TILE);
+  for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++)setTile(cx+dx,cy+dy,{tipo:TILE_AIR});
+  if(getTile(cx,cy+2).tipo===TILE_AIR)setTile(cx,cy+2,{tipo:TILE_DIRT,dureza:1,seed:0.5});
+})();
+
+const trees=[];
+(function gerarArvores(){
+  for(let x=-200;x<200;x++){
+    if(hash(x*31,777)<0.08){
+      let ty=SUPERFICIE;
+      while(ty<100 && getTile(x,ty).tipo===TILE_AIR)ty++;
+      if(getTile(x,ty).tipo===TILE_GRASS)trees.push({tx:x,ty:ty});
+    }
+  }
+})();
+
+const keys={}, touch={up:false,down:false,left:false,right:false};
+const KEYMAP={'KeyS':'down','ArrowDown':'down','KeyA':'left','ArrowLeft':'left','KeyD':'right','ArrowRight':'right','Space':'up'};
+
+window.addEventListener('keydown',e=>{
+  const k=KEYMAP[e.code];
+  if(k){keys[k]=true;e.preventDefault();return;}
+  if(e.code==='KeyW'||e.code==='ArrowUp'){keys.aimUp=true;e.preventDefault();return;}
+  if(e.code==='KeyC'){openCraft();return;}
+  if(e.code==='KeyE'){tryPortal();return;}
+});
+window.addEventListener('keyup',e=>{
+  const k=KEYMAP[e.code];
+  if(k){keys[k]=false;e.preventDefault();return;}
+  if(e.code==='KeyW'||e.code==='ArrowUp'){keys.aimUp=false;e.preventDefault();return;}
+});
+window.addEventListener('blur',()=>{for(const k in keys)keys[k]=false;});
+
+let mouseSegurando = false;
+let mouseInterval = null;
+canvas.addEventListener('mousedown',e=>{
+  if(e.button===0){
+    e.preventDefault();
+    mouseSegurando = true;
+    digInFront();
+    if(mouseInterval) clearInterval(mouseInterval);
+    mouseInterval = setInterval(() => { if(mouseSegurando) digInFront(); }, 180);
+  }
+});
+canvas.addEventListener('mouseup',e=>{
+  if(e.button===0){
+    mouseSegurando = false;
+    if(mouseInterval){ clearInterval(mouseInterval); mouseInterval = null; }
+  }
+});
+canvas.addEventListener('mouseleave',()=>{
+  mouseSegurando = false;
+  if(mouseInterval){ clearInterval(mouseInterval); mouseInterval = null; }
+});
+canvas.addEventListener('contextmenu',e=>e.preventDefault());
+
+function bindBtn(id,onDown,onUp){
+  const el=document.getElementById(id);
+  const d=e=>{e.preventDefault();onDown();}, u=e=>{e.preventDefault();onUp&&onUp();};
+  el.addEventListener('touchstart',d,{passive:false});
+  el.addEventListener('touchend',u,{passive:false});
+  el.addEventListener('touchcancel',u,{passive:false});
+  el.addEventListener('mousedown',d);el.addEventListener('mouseup',u);el.addEventListener('mouseleave',u);
+}
+bindBtn('up',()=>touch.up=true,()=>touch.up=false);
+bindBtn('down',()=>touch.down=true,()=>touch.down=false);
+bindBtn('left',()=>touch.left=true,()=>touch.left=false);
+bindBtn('right',()=>touch.right=true,()=>touch.right=false);
+
+// Botão de minerar do mobile com auto-repeat
+(function(){
+  const el = document.getElementById('dig');
+  let interval = null;
+  const start = e => {
+    e.preventDefault();
+    digInFront();
+    if(interval) clearInterval(interval);
+    interval = setInterval(digInFront, 180);
+  };
+  const stop = e => {
+    e.preventDefault();
+    if(interval){ clearInterval(interval); interval = null; }
+  };
+  el.addEventListener('touchstart', start, {passive:false});
+  el.addEventListener('touchend', stop, {passive:false});
+  el.addEventListener('touchcancel', stop, {passive:false});
+  el.addEventListener('mousedown', start);
+  el.addEventListener('mouseup', stop);
+  el.addEventListener('mouseleave', stop);
+})();
+
+function getTargetTile(){
+  const up = keys.aimUp || keys.up || touch.up;
+  const down = keys.down || touch.down;
+  const left = keys.left || touch.left;
+  const right = keys.right || touch.right;
+  let dx = 0, dy = 0;
+  if (up) dy = -1;
+  else if (down) dy = 1;
+  if (left) dx = -1;
+  else if (right) dx = 1;
+  if (dx === 0 && dy === 0) dx = player.facing;
+  const px = Math.floor((player.x + player.w/2) / TILE) + dx;
+  const py = Math.floor((player.y + player.h/2) / TILE) + dy;
+  return { tx: px, ty: py, dx, dy };
+}
+function digInFront(){
+  const { tx, ty } = getTargetTile();
+  player.digFrame = 12;
+  cavarTile(tx, ty);
+}
+function cavarTile(tx,ty){
+  const t=getTile(tx,ty);
+  if(!t||t.tipo===TILE_AIR||t.tipo===TILE_BEDROCK)return;
+  const pic=PICARETAS[player.picareta];
+  let precisa=1;
+  if(t.tipo===TILE_STONE)precisa=2;
+  if(t.tipo===TILE_ORE){const i=ORES.findIndex(o=>o.id===t.ore);precisa=Math.min(7,i+1);}
+  if(pic.forca<precisa){ flash(`Precisa picareta melhor! (força ${precisa})`); somErro(); return; }
+  const k = tx+','+ty;
+  if(t.tipo===TILE_ORE){
+    const dur = DURABILIDADE[t.ore] || 1;
+    const danoAtual = (danoMap.get(k) || 0) + pic.forca;
+    if(danoAtual >= dur){
+      danoMap.delete(k);
+      player.inv[t.ore] = (player.inv[t.ore] || 0) + 1;
+      setTile(tx,ty,{tipo:TILE_AIR});
+      somColetar(t.ore);
+    } else {
+      danoMap.set(k, danoAtual);
+      tocarTom(300 + danoAtual*80, 0.06, 'triangle', 0.10);
+    }
+  } else {
+    setTile(tx,ty,{tipo:TILE_AIR});
+    somCavar(t.tipo===TILE_STONE);
+  }
+  updateHUD();
+}
+let flashMsg='',flashTimer=0;
+function flash(msg){flashMsg=msg;flashTimer=90;}
+function solidAt(px,py){const t=getTile(Math.floor(px/TILE),Math.floor(py/TILE));return t&&t.tipo!==TILE_AIR;}
+function colide(px,py){const m=2;return[[px+m,py+m],[px+player.w-m,py+m],[px+m,py+player.h-m],[px+player.w-m,py+player.h-m]].some(([x,y])=>solidAt(x,y));}
+function movePlayer(){
+  let ax=0;
+  if(keys.left||touch.left){ax=-1;player.facing=-1;}
+  if(keys.right||touch.right){ax=1;player.facing=1;}
+  player.vx=ax*MOVE_SPEED;
+  if(ax!==0&&player.onGround)player.walkFrame=(player.walkFrame+1)%40; else player.walkFrame=0;
+  if(player.digFrame>0)player.digFrame--;
+  const subindo=keys.up||touch.up;
+  if(subindo){
+    const podeSubir=!solidAt(player.x+2,player.y-2)&&!solidAt(player.x+player.w-2,player.y-2);
+    if(podeSubir){player.vy=-FLY_SPEED;player.flying=true;} else player.vy=0;
+  } else {
+    player.flying=false;
+    player.vy+=GRAVITY;
+    if(player.vy>12)player.vy=12;
+  }
+  if(subindo&&player.onGround&&!player.flying)player.vy=-JUMP;
+  const nx=player.x+player.vx;
+  if(!colide(nx,player.y))player.x=nx;
+  player.onGround=false;
+  const ny=player.y+player.vy;
+  if(!colide(player.x,ny))player.y=ny;
+  else{if(player.vy>0)player.onGround=true;player.vy=0;}
+  if(player.flying&&player.vy>=0)player.flying=false;
+}
+
+function drawOre(px,py,oreId,seed){
+  const ore=ORES.find(o=>o.id===oreId);if(!ore)return;
+  const s=seed||0.5;
+  ctx.fillStyle='#3a3a3a';ctx.fillRect(px,py,TILE,TILE);
+  ctx.fillStyle=ore.cor;ctx.fillRect(px+3,py+3,TILE-6,TILE-6);
+  if(oreId==='carvao'){
+    ctx.fillStyle='rgba(0,0,0,0.5)';
+    for(let i=0;i<4;i++){const ox=px+5+Math.floor(hash(px+i,py*3)*22),oy=py+5+Math.floor(hash(px*2,py+i)*22);ctx.fillRect(ox,oy,4,2);}
+    ctx.fillStyle='rgba(140,140,140,0.6)';
+    for(let i=0;i<3;i++){const ox=px+6+Math.floor(hash(px+i,py*11)*20),oy=py+6+Math.floor(hash(px*13,py+i)*20);ctx.fillRect(ox,oy,2,2);}
+  } else if(oreId==='ferro'){
+    ctx.fillStyle='rgba(200,120,50,0.75)';
+    for(let i=0;i<5;i++){const ox=px+5+Math.floor(hash(px+i,py*3)*22),oy=py+5+Math.floor(hash(px*2,py+i)*22);ctx.beginPath();ctx.arc(ox,oy,2+(i%2),0,Math.PI*2);ctx.fill();}
+    ctx.fillStyle='rgba(80,50,30,0.6)';
+    for(let i=0;i<3;i++){const ox=px+6+Math.floor(hash(px+i,py*13)*20),oy=py+6+Math.floor(hash(px*17,py+i)*20);ctx.fillRect(ox,oy,3,2);}
+  } else if(oreId==='ouro'){
+    ctx.fillStyle='rgba(255,240,150,0.95)';
+    for(let i=0;i<4;i++){const ox=px+6+Math.floor(hash(px*11+i,py*4)*20),oy=py+6+Math.floor(hash(px*3,py*9+i)*20);ctx.fillRect(ox-2,oy,5,1);ctx.fillRect(ox,oy-2,1,5);}
+    ctx.fillStyle='rgba(200,140,20,0.6)';ctx.fillRect(px+4,py+4,4,4);
+  } else if(oreId==='diamante'){
+    ctx.fillStyle='rgba(200,240,255,0.75)';
+    const cx=px+TILE/2,cy=py+TILE/2;
+    for(let i=0;i<5;i++){const ang=(i/5)*Math.PI*2+s;ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx+Math.cos(ang)*8,cy+Math.sin(ang)*8);ctx.lineTo(cx+Math.cos(ang+0.5)*8,cy+Math.sin(ang+0.5)*8);ctx.closePath();ctx.fill();}
+    ctx.fillStyle='#fff';ctx.fillRect(cx-1,cy-1,3,3);
+  } else if(oreId==='esmeralda'){
+    ctx.fillStyle='rgba(200,255,200,0.65)';
+    const cx=px+TILE/2,cy=py+TILE/2;
+    for(let i=0;i<3;i++){const ang=(i/3)*Math.PI*2+s;ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx+Math.cos(ang)*9,cy+Math.sin(ang)*9);ctx.lineTo(cx+Math.cos(ang+0.8)*9,cy+Math.sin(ang+0.8)*9);ctx.closePath();ctx.fill();}
+    ctx.fillStyle='rgba(30,180,80,0.85)';ctx.fillRect(cx-3,cy-3,6,6);
+  } else if(oreId==='ametista'){
+    ctx.fillStyle='rgba(220,180,255,0.75)';
+    const cx=px+TILE/2,cy=py+TILE/2;
+    for(let i=0;i<4;i++){const ang=(i/4)*Math.PI*2+s;ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx+Math.cos(ang)*10,cy+Math.sin(ang)*10);ctx.lineTo(cx+Math.cos(ang+0.4)*4,cy+Math.sin(ang+0.4)*4);ctx.closePath();ctx.fill();}
+    ctx.fillStyle='#e0b0ff';ctx.beginPath();ctx.arc(cx,cy,2,0,Math.PI*2);ctx.fill();
+  }
+  ctx.strokeStyle='rgba(0,0,0,0.3)';ctx.strokeRect(px+0.5,py+0.5,TILE-1,TILE-1);
+}
+function drawDirt(px,py){
+  ctx.fillStyle='#5a3a1f';ctx.fillRect(px,py,TILE,TILE);
+  ctx.fillStyle='rgba(80,50,20,0.7)';
+  for(let i=0;i<5;i++){const ox=px+Math.floor(hash(px+i,py*7)*30),oy=py+Math.floor(hash(px*11,py+i)*30);ctx.fillRect(ox,oy,2,2);}
+  ctx.fillStyle='rgba(120,80,40,0.5)';
+  for(let i=0;i<3;i++){const ox=px+Math.floor(hash(px+i,py*9)*30),oy=py+Math.floor(hash(px*13,py+i)*30);ctx.fillRect(ox,oy,3,1);}
+  ctx.strokeStyle='rgba(0,0,0,0.2)';ctx.strokeRect(px+0.5,py+0.5,TILE-1,TILE-1);
+}
+function drawStone(px,py){
+  ctx.fillStyle='#4a4a4a';ctx.fillRect(px,py,TILE,TILE);
+  ctx.strokeStyle='rgba(30,30,30,0.6)';ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(px+6,py+8);ctx.lineTo(px+14,py+16);ctx.lineTo(px+10,py+24);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(px+22,py+6);ctx.lineTo(px+26,py+14);ctx.stroke();
+  ctx.fillStyle='rgba(120,120,120,0.3)';ctx.fillRect(px+4,py+4,6,4);
+  ctx.strokeStyle='rgba(0,0,0,0.2)';ctx.strokeRect(px+0.5,py+0.5,TILE-1,TILE-1);
+}
+function drawGrass(px,py){
+  ctx.fillStyle='#5a3a1f';ctx.fillRect(px,py,TILE,TILE);
+  ctx.fillStyle='rgba(80,50,20,0.7)';
+  for(let i=0;i<3;i++){
+    const ox=px+Math.floor(hash(px+i,py*7)*30);
+    const oy=py+Math.floor(hash(px*11,py+i)*30);
+    ctx.fillRect(ox,oy,2,2);
+  }
+  ctx.fillStyle='#3a8a3a';ctx.fillRect(px,py,TILE,8);
+  ctx.fillStyle='#5aba4a';
+  for(let i=0;i<4;i++){
+    const ox=px+3+i*7;
+    const h=2+Math.floor(hash(px+i,py)*3);
+    ctx.fillRect(ox,py-h+2,2,h);
+  }
+  ctx.fillStyle='rgba(120,200,100,0.4)';ctx.fillRect(px,py,TILE,2);
+  ctx.strokeStyle='rgba(0,0,0,0.2)';ctx.strokeRect(px+0.5,py+0.5,TILE-1,TILE-1);
+}
+function drawTree(tx,ty){
+  const px=tx*TILE, py=ty*TILE;
+  ctx.fillStyle='#5a3a1f';
+  ctx.fillRect(px+TILE/2-3,py-40,6,40);
+  ctx.fillStyle='rgba(0,0,0,0.3)';
+  ctx.fillRect(px+TILE/2-2,py-35,1,6);
+  ctx.fillRect(px+TILE/2+1,py-20,1,8);
+  ctx.fillStyle='#2a7a2a';
+  ctx.beginPath();ctx.arc(px+TILE/2,py-50,16,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#3a9a3a';
+  ctx.beginPath();ctx.arc(px+TILE/2-8,py-46,12,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(px+TILE/2+8,py-46,12,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#4aba4a';
+  ctx.beginPath();ctx.arc(px+TILE/2-4,py-54,10,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(px+TILE/2+4,py-52,10,0,Math.PI*2);ctx.fill();
+}
+
+function drawPlayer(){
+  const px=player.x,py=player.y,w=player.w,h=player.h;
+  const cx=px+w/2, face=player.facing;
+  if(player.flying){ctx.shadowColor='#66e0ff';ctx.shadowBlur=14;}
+  const walkPhase=(player.walkFrame/40)*Math.PI*2;
+  const legOffset=player.onGround?Math.sin(walkPhase)*3:0;
+  ctx.fillStyle='#2a5a3a';
+  ctx.fillRect(cx-7,py+h-10,5,10+legOffset);
+  ctx.fillRect(cx+2,py+h-10,5,10-legOffset);
+  ctx.fillStyle='#1a1a1a';
+  ctx.fillRect(cx-8,py+h-3+legOffset,7,3);
+  ctx.fillRect(cx+1,py+h-3-legOffset,7,3);
+  ctx.fillStyle='#3d8b5c';ctx.fillRect(cx-8,py+8,16,12);
+  ctx.fillStyle='#4a2a10';ctx.fillRect(cx-8,py+18,16,2);
+  ctx.fillStyle='#e0b080';ctx.fillRect(face===1?cx-10:cx+8,py+10,3,10);
+  const armX=face===1?cx+6:cx-9;
+  ctx.fillStyle='#f0c090';ctx.fillRect(armX,py+10,3,10);
+  const digAng=player.digFrame>0?(player.digFrame/12)*-1.2:0;
+  ctx.save();
+  ctx.translate(face===1?cx+9:cx-9,py+12);
+  ctx.rotate(face===1?digAng:-digAng);
+  ctx.fillStyle='#6b4423';ctx.fillRect(-1,-8,2,16);
+  ctx.fillStyle='#888';ctx.fillRect(-5,-10,10,3);ctx.fillRect(-6,-10,2,5);ctx.fillRect(4,-10,2,5);
+  ctx.restore();
+  ctx.fillStyle='#f0c090';ctx.beginPath();ctx.arc(cx,py+5,6,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#3a1a0a';ctx.beginPath();ctx.arc(cx,py+3,6,Math.PI,Math.PI*2);ctx.fill();ctx.fillRect(cx-6,py+3,12,2);
+  ctx.fillStyle='#000';const eX=face===1?2:-2;
+  ctx.fillRect(cx+eX-1,py+5,2,2);ctx.fillRect(cx+eX+3,py+5,2,2);
+  ctx.fillStyle='#a05030';ctx.fillRect(cx-1,py+9,3,1);
+  ctx.shadowBlur=0;
+}
+function desenharNave(){
+  const px = nave.x, py = nave.y;
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.rotate(nave.angulo);
+  const fogoTam = 20 + Math.sin(cutsceneT * 0.4) * 6;
+  const gradFogo = ctx.createLinearGradient(0, 20, 0, 20 + fogoTam);
+  gradFogo.addColorStop(0, 'rgba(255,200,50,1)');
+  gradFogo.addColorStop(0.5, 'rgba(255,100,20,0.9)');
+  gradFogo.addColorStop(1, 'rgba(255,50,0,0)');
+  ctx.fillStyle = gradFogo;
+  ctx.beginPath();
+  ctx.moveTo(-10, 18); ctx.lineTo(0, 18 + fogoTam); ctx.lineTo(10, 18);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#c0c8d8';
+  ctx.beginPath(); ctx.ellipse(0, 0, 40, 18, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#5ad6f0';
+  ctx.beginPath(); ctx.ellipse(0, -6, 16, 9, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.beginPath(); ctx.ellipse(-4, -8, 6, 3, 0, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#6a7080'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(-38, 4); ctx.lineTo(38, 4); ctx.stroke();
+  ctx.fillStyle = '#9098a8';
+  ctx.beginPath(); ctx.moveTo(-40, 0); ctx.lineTo(-52, 8); ctx.lineTo(-36, 10); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(40, 0); ctx.lineTo(52, 8); ctx.lineTo(36, 10); ctx.closePath(); ctx.fill();
+  const blink = Math.sin(cutsceneT * 0.5) > 0;
+  ctx.fillStyle = blink ? '#ff4040' : '#802020';
+  ctx.beginPath(); ctx.arc(-20, 2, 3, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = blink ? '#40ff40' : '#208020';
+  ctx.beginPath(); ctx.arc(20, 2, 3, 0, Math.PI*2); ctx.fill();
+  ctx.shadowColor = '#5ad6f0'; ctx.shadowBlur = 20;
+  ctx.strokeStyle = 'rgba(90,214,240,0.6)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.ellipse(0, 0, 42, 20, 0, 0, Math.PI*2); ctx.stroke();
+  ctx.restore();
+}
+
+function updateHUD(){
+  const invEl=document.getElementById('inv');
+  const partes=Object.keys(player.inv).map(k=>{const o=ORES.find(x=>x.id===k);return`${o.nome}: ${player.inv[k]}`;});
+  invEl.innerHTML=partes.length?partes.join('<br>'):'Sem minérios';
+  const depth=Math.floor(player.y/TILE)-SUPERFICIE;
+  document.getElementById('depth').textContent=`Profundidade: ${Math.max(0,depth)}m`;
+  const cb=document.getElementById('craftBtn');
+  if(player.hasPedra)cb.classList.add('hidden');else cb.classList.remove('hidden');
+}
+function podeCraftar(c){return Object.keys(c).every(k=>(player.inv[k]||0)>=c[k]);}
+function gastar(c){Object.keys(c).forEach(k=>{player.inv[k]-=c[k];});}
+function custoTexto(c){return Object.keys(c).map(k=>{const o=ORES.find(x=>x.id===k);return`${o.nome} ${player.inv[k]||0}/${c[k]}`;}).join(' · ');}
+function openCraft(){
+  const modal=document.getElementById('modal'),list=document.getElementById('craftList');
+  list.innerHTML='';
+  const prox=player.picareta+1;
+  if(prox<PICARETAS.length){
+    const p=PICARETAS[prox],ok=podeCraftar(p.custo);
+    const div=document.createElement('div');
+    div.className='item'+(ok?'':' disabled');
+    div.innerHTML=`Picareta de ${p.nome} (força ${p.forca})<br><small>${custoTexto(p.custo)}</small>`;
+    if(ok)div.onclick=()=>{gastar(p.custo);player.picareta=prox;somCraft();flash(`Picareta de ${p.nome} craftada!`);openCraft();updateHUD();};
+    list.appendChild(div);
+  }
+  if(!player.hasPedra){
+    const ok=podeCraftar(PEDRA_NUVENS.custo);
+    const div=document.createElement('div');
+    div.className='item'+(ok?'':' disabled');
+    div.innerHTML=`<b>${PEDRA_NUVENS.nome}</b><br><small>${custoTexto(PEDRA_NUVENS.custo)}</small>`;
+    if(ok)div.onclick=()=>{gastar(PEDRA_NUVENS.custo);player.hasPedra=true;somCraft();mensagemTopo='Volte para cima!';mensagemTopoTimer=240;document.getElementById('modal').style.display='none';spawnPortal();updateHUD();};
+    list.appendChild(div);
+  }
+  modal.style.display='flex';
+}
+document.getElementById('craftBtn').addEventListener('click',openCraft);
+document.getElementById('closeModal').addEventListener('click',()=>{document.getElementById('modal').style.display='none';});
+let portal=null;
+function spawnPortal(){portal={x:0,y:(SUPERFICIE-2)*TILE,w:40,h:60};}
+function tryPortal(){if(!portal||!player.hasPedra)return;const d=Math.hypot(player.x-portal.x,player.y-portal.y);if(d<60){somPortal();startCutscene();}}
+let cutsceneAtiva=false, cutsceneFase=0, cutsceneT=0;
+let mensagemTopo='', mensagemTopoTimer=0;
+let nave={x:0,y:0,vy:0,angulo:0};
+function startCutscene(){
+  cutsceneAtiva=true; cutsceneFase=0; cutsceneT=0;
+  nave.x = player.x + player.w/2;
+  nave.y = player.y - 300;
+  nave.vy = 1.0;
+  nave.angulo = 0;
+  somMotorNave();
+}
+
+function draw(){
+  const profundidade=Math.max(0,Math.floor(player.y/TILE)-SUPERFICIE);
+  const escuridao=Math.min(1,profundidade/80);
+  const r1=Math.floor(135-escuridao*115);
+  const g1=Math.floor(206-escuridao*180);
+  const b1=Math.floor(235-escuridao*220);
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,`rgb(${r1},${g1},${b1})`);
+  grad.addColorStop(1,`rgb(${Math.floor(r1*0.7)},${Math.floor(g1*0.7)},${Math.floor(b1*0.7)})`);
+  ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+  const viewW=W/ZOOM, viewH=H/ZOOM;
+  const camX=player.x+player.w/2-viewW/2;
+  const camY=player.y+player.h/2-viewH/2;
+  ctx.save();
+  ctx.scale(ZOOM,ZOOM);
+  ctx.translate(-Math.floor(camX),-Math.floor(camY));
+  const sTx=Math.floor(camX/TILE)-1, eTx=sTx+Math.ceil(viewW/TILE)+2;
+  const sTy=Math.floor(camY/TILE)-1, eTy=sTy+Math.ceil(viewH/TILE)+2;
+  if(camY < SUPERFICIE*TILE + 200){
+    const solX = camX + viewW - 80, solY = camY + 60;
+    ctx.fillStyle = 'rgba(255,246,160,0.25)';
+    ctx.beginPath();ctx.arc(solX,solY,60,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle = '#fff6a0';
+    ctx.beginPath();ctx.arc(solX,solY,40,0,Math.PI*2);ctx.fill();
+  }
+  for(let y=sTy;y<=eTy;y++){
+    for(let x=sTx;x<=eTx;x++){
+      const t=getTile(x,y);
+      if(t.tipo===TILE_AIR)continue;
+      const px=x*TILE,py=y*TILE;
+      if(t.tipo===TILE_GRASS)drawGrass(px,py);
+      else if(t.tipo===TILE_DIRT)drawDirt(px,py);
+      else if(t.tipo===TILE_STONE)drawStone(px,py);
+      else if(t.tipo===TILE_BEDROCK){ctx.fillStyle='#1a1a1a';ctx.fillRect(px,py,TILE,TILE);ctx.strokeStyle='rgba(60,60,60,0.5)';ctx.strokeRect(px+0.5,py+0.5,TILE-1,TILE-1);}
+      else if(t.tipo===TILE_ORE)drawOre(px,py,t.ore,t.seed);
+    }
+  }
+  for(const tr of trees){
+    if(tr.tx>=sTx-2 && tr.tx<=eTx+2 && tr.ty>=sTy-2 && tr.ty<=eTy+2) drawTree(tr.tx,tr.ty);
+  }
+  const target = getTargetTile();
+  const tt = getTile(target.tx, target.ty);
+  if (tt && tt.tipo !== TILE_AIR && tt.tipo !== TILE_BEDROCK) {
+    const tpx = target.tx * TILE, tpy = target.ty * TILE;
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    ctx.fillRect(tpx, tpy, TILE, TILE);
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(tpx + 1, tpy + 1, TILE - 2, TILE - 2);
+    ctx.lineWidth = 1;
+  }
+  if(portal && !cutsceneAtiva){
+    ctx.fillStyle='#ffd35c';ctx.beginPath();ctx.arc(portal.x+portal.w/2,portal.y+portal.h/2,28,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#fff';ctx.font='14px sans-serif';ctx.fillText('Portal',portal.x-10,portal.y-10);
+  }
+  if(!cutsceneAtiva || cutsceneFase < 2) drawPlayer();
+  if(cutsceneAtiva && cutsceneFase < 3) desenharNave();
+  ctx.restore();
+  if(cutsceneAtiva && cutsceneFase===0){
+    const fade = Math.min(0.6, cutsceneT/60);
+    ctx.fillStyle = `rgba(0,0,0,${fade})`;
+    ctx.fillRect(0,0,W,H);
+  }
+  if(flashTimer>0){
+    ctx.fillStyle='rgba(0,0,0,.7)';ctx.fillRect(W/2-180,H/2-30,360,60);
+    ctx.fillStyle='#fff';ctx.font='16px sans-serif';ctx.textAlign='center';
+    ctx.fillText(flashMsg,W/2,H/2+6);ctx.textAlign='left';flashTimer--;
+  }
+  if(portal&&player.hasPedra&&!cutsceneAtiva){
+    const d=Math.hypot(player.x-portal.x,player.y-portal.y);
+    if(d<120){ctx.fillStyle='#ffd35c';ctx.font='16px sans-serif';ctx.textAlign='center';ctx.fillText('Aperte E para usar o portal',W/2,80);ctx.textAlign='left';}
+  }
+  if(mensagemTopoTimer > 0){
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(W/2 - 200, 20, 400, 70);
+    ctx.strokeStyle = '#ffd35c';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(W/2 - 200, 20, 400, 70);
+    ctx.fillStyle = '#ffd35c';
+    ctx.font = 'bold 32px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(mensagemTopo, W/2, 65);
+    ctx.textAlign = 'left';
+    mensagemTopoTimer--;
+  }
+}
+
+function atualizarCutscene(){
+  if(!cutsceneAtiva) return;
+  cutsceneT++;
+  const alvoY = player.y - 40;
+  if(cutsceneFase===0){
+    nave.y += nave.vy;
+    nave.angulo = Math.sin(cutsceneT * 0.1) * 0.15;
+    if(cutsceneT % 90 === 0) somMotorNave();
+    if(nave.y >= alvoY){ nave.y = alvoY; cutsceneFase=1; cutsceneT=0; }
+  } else if(cutsceneFase===1){
+    nave.angulo = Math.sin(cutsceneT * 0.15) * 0.1;
+    const dx = nave.x - (player.x + player.w/2);
+    const dy = nave.y - (player.y + player.h/2);
+    player.x += dx * 0.05;
+    player.y += dy * 0.05;
+    if(cutsceneT > 120){ cutsceneFase=2; cutsceneT=0; somDecolagem(); }
+  } else if(cutsceneFase===2){
+    nave.y -= 4;
+    nave.angulo *= 0.95;
+    if(cutsceneT > 150){ cutsceneFase=3; cutsceneT=0; }
+  } else if(cutsceneFase===3){
+    if(cutsceneT === 1){
+      somVitoria();
+      const cs=document.getElementById('cutscene');
+      cs.style.display='flex';
+      document.getElementById('cutsceneText').innerHTML='<b>VOCÊ ZEROU O JOGO!</b><br><br>A Pedra das Nuvens cumpriu seu destino.<br>Obrigado por jogar!';
+    }
+  }
+}
+function loop(){ if(cutsceneAtiva) atualizarCutscene(); else movePlayer(); draw(); updateHUD(); requestAnimationFrame(loop); }
+
+const muteBtn = document.createElement('button');
+muteBtn.id = 'muteBtn';
+muteBtn.textContent = '🔊';
+document.body.appendChild(muteBtn);
+muteBtn.addEventListener('click', () => {
+  somLigado = !somLigado;
+  muteBtn.textContent = somLigado ? '🔊' : '🔇';
+});
+
+document.getElementById('btnLiTudo').addEventListener('click', () => {
+  document.getElementById('tutorial').style.display = 'none';
+  initAudio();
+});
+
+updateHUD();loop();
+})();
+</script>
+</body>
+</html>
